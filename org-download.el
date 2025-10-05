@@ -378,8 +378,8 @@
   :keymap org-download-mode-map
   (if org-download-mode
       (progn
-	(push (cons "^\\(https?//|ftp//file/|nfs//):" #'org-download-dnd)
-	      dnd-protocol-alist)
+	(push (cons "^\\(https?\\|ftp\\|file\\|nfs\\):" #'org-download-dnd)
+      dnd-protocol-alist)
 	(push (cons "^data:" #'org-download-dnd-base64) dnd-protocol-alist))
     ;;remove our handlers
     (setq dnd-protocol-alist
