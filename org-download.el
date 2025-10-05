@@ -22,8 +22,8 @@
 (require 'org)
 (require 'org-attach)
 (require 'org-element)
+(require 'dired)
 
-
 ;;; User options
 (defgroup org-download nil
   "Image drag-and-drop for Org mode."
@@ -105,7 +105,6 @@
   "Non-nil means delete local file after copying it."
   :type 'boolean)
 
-
 ;;; Internal variables
 (defvar org-download-path-last-file nil
   "Full path of the last downloaded file.")
@@ -113,7 +112,6 @@
 (defvar org-download--file-content nil
   "When non-nil, an already-downloaded file to use.")
 
-
 ;;; Utilities
 (defun org-download-org-mode-p ()
   "Return non-nil if we are in an Org buffer."
@@ -144,7 +142,6 @@
         dir)
     default-directory))
 
-
 ;;; File naming
 (defvar org-download-file-format-function #'org-download-file-format-default)
 
@@ -162,7 +159,6 @@
     (abbreviate-file-name
      (expand-file-name (funcall org-download-file-format-function base) dir))))
 
-
 ;;; Download / copy
 (defun org-download--image (link filename)
   "Save LINK to FILENAME."
@@ -199,7 +195,6 @@
   (let ((coding-system-for-write 'no-conversion))
     (write-region nil nil filename nil nil nil 'confirm)))
 
-
 ;;; Insertion
 (defvar org-download-link-format "[[file:%s]]\n")
 
@@ -249,7 +244,6 @@
     (goto-char beg)                     ; stay where dropped
     str))
 
-
 ;;; High-level entry points
 (defun org-download-image (link)
   "Download image at LINK and insert link at point."
@@ -296,14 +290,7 @@
       (org-download-image (concat "file:" file))
       (delete-file file))))
 
-
 ;;; Drag-and-drop (single + multiple files)
-(defun org-download-dnd-fallback (uri action)
-  "Let default dnd mechanism handle URI/ACTION."
-  (let ((dnd-protocol-alist
-         (rassq-delete-all 'org-download-dnd (copy-alist dnd-protocol-alist))))
-    (dnd-handle-one-url nil action uri)))
-
 (defun org-download-dnd (uri action)
   "Drag-and-drop handler for Org buffers."
   (cond
@@ -321,9 +308,7 @@
    ((org-download-org-mode-p)
     (condition-case nil
         (org-download-image uri)
-      (error (org-download-dnd-fallback uri action))))
-   ((eq major-mode 'dired-mode)
-    (org-download-dired uri))
+      (error nil)))
    (t
     (org-download-dnd-fallback uri action))))
 
@@ -332,7 +317,6 @@
   (raise-frame)
   (org-download-image uri))
 
-
 ;;; Base64 drop (browser → Emacs)
 (defun org-download-dnd-base64 (uri _action)
   (when (and (org-download-org-mode-p)
@@ -345,7 +329,6 @@
         (write-file fname))
       (org-download-insert-link fname fname))))
 
-
 ;;; Parse link / detect type
 (defun org-download--parse-link (link)
   (cond ((image-type-from-file-name link) (list link nil))
@@ -383,23 +366,37 @@
   '("<img +src=\"" "<img +\\(class=\"[^\"]+\"\\)? *src=\"")
   "Regexes to extract real image URL from HTML wrapper.")
 
-
 ;;; Enable / disable
 ;;;###autoload
-(defun org-download-enable ()
-  "Enable org-download."
-  (unless (assoc "^\\(https?\\|ftp\\|file\\|nfs\\):" dnd-protocol-alist)
+(defvar org-download-mode-map (make-sparse-keymap)
+  "Keymap for `org-download-mode'.")
+
+(define-minor-mode org-download-mode
+  "Minor mode for dragging images into Org buffers."
+  :lighter " Dl"
+  :keymap org-download-mode-map
+  (if org-download-mode
+      (progn
+	(push (cons "^\\(https?//|ftp//file/|nfs//):" #'org-download-dnd)
+	      dnd-protocol-alist)
+	(push (cons "^data:" #'org-download-dnd-base64) dnd-protocol-alist))
+    ;;remove our handlers
     (setq dnd-protocol-alist
-          `(("^\\(https?\\|ftp\\|file\\|nfs\\):" . org-download-dnd)
-            ("^data:" . org-download-dnd-base64)
-            ,@dnd-protocol-alist))))
+	  (cl-remove-if (lambda (x) (memq (cdr x) '(org-download-dnd org-download-dnd-base64)))
+			dnd-protocol-alist))))
 
-(defun org-download-disable ()
-  "Disable org-download."
-  (setq dnd-protocol-alist
-        (rassq-delete-all 'org-download-dnd dnd-protocol-alist)))
+(defvar org-download-dired-mode-map (make-sparse-keymap)
+  "Keymap for `org-download-dired-mode'.")
 
-(org-download-enable)
+(define-minor-mode org-download-dired-mode
+  "Minor mode for dragging images into Dired buffers."
+  :lighter " Dl"
+  :keymap org-download-dired-mode-map
+  (if org-download-dired-mode
+      (push (cons "^\\(https?\\|ftp|\\file\\nfs\\):" #'org-download-dired)
+	    dnd-protocol-alist)
+    (setq dnd-protocol-alist (cl-remove-if
+			      (lambda (x) (eq (cdr x) #'org-download-dired)) dnd-protocol-alist))))
 
 (provide 'org-download)
 
