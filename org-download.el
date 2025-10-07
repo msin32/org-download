@@ -295,24 +295,26 @@
 ;;; Drag-and-drop (single + multiple files)
 (defun org-download-dnd (uri action)
   "Drag-and-drop handler for Org buffers."
-  (cond
-   ;; multiple files (modern file-managers send a list)
-   ((and (listp uri) (cl-every #'stringp uri))
-    (if (org-download-org-mode-p)
-        (dolist (f uri)
-          (condition-case nil
-              (org-download-image (if (string-prefix-p "file:" f)
-                                      f
-                                    (concat "file:" f)))
-            (error nil)))
-      (org-download-dnd-fallback uri action)))
-   ;; single URI
-   ((org-download-org-mode-p)
-    (condition-case nil
-        (org-download-image uri)
-      (error nil)))
-   (t
-    (org-download-dnd-fallback uri action))))
+  ;; master-safe: ensure we always have a live window
+  (let ((window (or (and (windowp (car-safe action)) (car action))
+                    (frame-selected-window)
+                    (selected-window))))
+    (cond
+     ;; multiple files
+     ((and (listp uri) (cl-every #'stringp uri))
+      (if (org-download-org-mode-p)
+          (save-excursion          ; keep cursor
+            (goto-char (window-point window))
+            (dolist (f uri)
+              (org-download-image (if (string-prefix-p "file:" f) f (concat "file:" f)))))
+        (dnd-handle-one-url window action uri))) ; fall back
+     ;; single URI
+     ((org-download-org-mode-p)
+      (save-excursion
+        (goto-char (window-point window))
+        (org-download-image uri)))
+     (t
+      (dnd-handle-one-url window action uri)))))
 
 (defun org-download-dired (uri)
   "Download URI to `default-directory'."
