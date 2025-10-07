@@ -334,7 +334,7 @@ passes a window/frame as the first argument)."
                 (error (message "org-download: failed to drop %s: %S" f err))))
           (org-download-dnd-fallback uri action)))
        ;; single URI (string)
-       ((and (stringp uri) (org-download-org-mode_p))
+       ((and (stringp uri) (org-download-org-mode-p))
         (condition-case err
             (org-download-image uri)
           (error (message "org-download: failed to drop %s: %S" uri err))))
