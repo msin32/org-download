@@ -223,6 +223,7 @@
 (defun org-download-insert-link (link filename)
   "Insert link (and annotation) for FILENAME at point."
   (let* ((beg      (point))
+	 (drop-pt  (point-marker))
          (line-beg (line-beginning-position))
          (indent   (- beg line-beg))
          (in-item  (org-in-item-p))
@@ -241,7 +242,8 @@
     (insert (funcall org-download-link-format-function filename))
     (setq str (buffer-substring-no-properties line-beg (point)))
     (when in-item (indent-region line-beg (point) indent))
-    (goto-char beg)                     ; stay where dropped
+    (goto-char drop-pt)                     ; go to drop position
+    (set-marker drop-pt nil)
     str))
 
 ;;; High-level entry points
@@ -377,14 +379,21 @@
   :lighter " Dl"
   :keymap org-download-mode-map
   (if org-download-mode
+      ;; enable – push SAFE wrapper first
       (progn
-	(push (cons "^\\(https?\\|ftp\\|file\\|nfs\\):" #'org-download-dnd)
-      dnd-protocol-alist)
-	(push (cons "^data:" #'org-download-dnd-base64) dnd-protocol-alist))
-    ;;remove our handlers
+        (push (cons "^\\(https?\\|ftp\\|file\\|nfs\\):"
+                    (lambda (uri action)
+                      (org-download-dnd (or (frame-selected-window)
+                                            (selected-window))
+                                        action)))
+              dnd-protocol-alist)
+        (push (cons "^data:" #'org-download-dnd-base64) dnd-protocol-alist))
+    ;; disable – remove our handlers
     (setq dnd-protocol-alist
-	  (cl-remove-if (lambda (x) (memq (cdr x) '(org-download-dnd org-download-dnd-base64)))
-			dnd-protocol-alist))))
+          (cl-remove-if (lambda (x)
+                          (memq (cdr x) '(org-download-dnd
+                                          org-download-dnd-base64)))
+                        dnd-protocol-alist))))
 
 (defvar org-download-dired-mode-map (make-sparse-keymap)
   "Keymap for `org-download-dired-mode'.")
