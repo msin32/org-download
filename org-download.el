@@ -13,14 +13,8 @@
 ;; No automatic preview – use Org’s own `C-c C-x C-v' if/when you want it.
 ;;
 ;; NOTE:
-;;   * Remove any wrapper you installed in your init that called
-;;     `org-download-dnd' with a window/frame as the first arg (that wrapper
-;;     caused the `wrong-type-argument window-valid-p ...' errors).
-;;   * If you want real-time visual indication of the exact mouse drop point,
-;;     enable `dnd-indicate-insertion-point' in your config:
-;;         (setq dnd-indicate-insertion-point t)
-;;     Emacs will then update point to the drop position during drag so the
-;;     handler inserts exactly where the mouse is released.
+;;  * If you want the drop point to follow the mouse during dragging, enable:
+;;      (setq dnd-indicate-insertion-point t)
 ;;
 
 ;;; Code:
@@ -303,48 +297,118 @@
 (defun org-download-dnd (uri action)
   "Drag-and-drop handler for Org buffers.
 
-This function is defensive: it will attempt to pick the window currently
-showing the buffer and `with-selected-window` before performing insertion.
-It also validates argument types and reports clear messages if the
-handler is called incorrectly (for example, if a user-supplied wrapper
-passes a window/frame as the first argument)."
-  (let* ((win (or (and (buffer-live-p (current-buffer))
-                       (get-buffer-window (current-buffer) t))
-                  (selected-window))))
-    ;; Prefer a live window that displays the buffer; otherwise fallback.
-    (unless (window-live-p win)
-      (setq win (selected-window)))
-    ;; Defensive: if uri is not a string/list (i.e. some wrapper replaced it
-    ;; with a frame/window), warn and bail out.
-    (when (and (not (stringp uri))
-               (not (listp uri))
-               (not (and (consp uri) (cl-every #'stringp uri))))
-      (message "org-download-dnd: unexpected uri type %S — ensure no wrapper calls the handler with a WINDOW as the first arg" (type-of uri))
-      (cl-return-from org-download-dnd nil))
-    (with-selected-window win
+This handler is defensive and attempts to recover if it is (incorrectly)
+invoked with a window or frame as the first argument (some user wrappers do
+this by mistake). It will:
+ - detect and convert a frame -> window
+ - if the first arg is a window/frame, try to use `action' as the real URI
+ - only call `with-selected-window' with a real window
+ - bail gracefully (with a message) if no usable URI is found"
+  ;; Normalize / recover from invalid-caller patterns
+  (cond
+   ;; If caller accidentally passed a WINDOW as first arg, try to recover:
+   ((windowp uri)
+    (let ((maybe-win uri)
+          (maybe-uri action))
+      ;; prefer a string or list in the action position as the URI
       (cond
-       ;; multiple files (modern file-managers send a list)
-       ((and (listp uri) (cl-every #'stringp uri))
-        (if (org-download-org-mode-p)
-            (dolist (f uri)
-              (condition-case err
-                  (org-download-image (if (string-prefix-p "file:" f)
-                                          f
-                                        (concat "file:" f)))
-                (error (message "org-download: failed to drop %s: %S" f err))))
-          (org-download-dnd-fallback uri action)))
-       ;; single URI (string)
-       ((and (stringp uri) (org-download-org-mode-p))
-        (condition-case err
-            (org-download-image uri)
-          (error (message "org-download: failed to drop %s: %S" uri err))))
-       ((and (stringp uri) (org-download-org-mode-p))
-        ;; fallback if not in org-mode
-        (org-download-dnd-fallback uri action))
-       (t
-        (org-download-dnd-fallback uri action))))))
+       ((or (stringp maybe-uri) (and (listp maybe-uri) (cl-every #'stringp maybe-uri)))
+        (setq uri maybe-uri
+              action nil
+              uri maybe-uri
+              ;; make `win' be the window that was passed
+              )
+        ;; continue below with `win' derived from `maybe-win'
+        (let ((win maybe-win))
+          (setq win (if (window-live-p win) win (selected-window)))
+          (unless (or (stringp uri) (and (listp uri) (cl-every #'stringp uri)))
+            (message "org-download-dnd: expected a URI but couldn't recover; skipping")
+            (cl-return-from org-download-dnd nil))
+          (when (window-live-p win)
+            (with-selected-window win
+              (cond
+               ((and (listp uri) (cl-every #'stringp uri))
+                (if (org-download-org-mode-p)
+                    (dolist (f uri)
+                      (condition-case err
+                          (org-download-image (if (string-prefix-p "file:" f)
+                                                  f
+                                                (concat "file:" f)))
+                        (error (message "org-download: failed to drop %s: %S" f err))))
+                  (org-download-dnd-fallback uri action)))
+               ((and (stringp uri) (org-download-org-mode-p))
+                (condition-case err
+                    (org-download-image uri)
+                  (error (message "org-download: failed to drop %s: %S" uri err))))
+               ((and (stringp uri))
+                (org-download-dnd-fallback uri action))
+               (t (org-download-dnd-fallback uri action)))))))
+       (t ;; can't recover
+        (message "org-download-dnd: called with a window as first arg and action doesn't look like an URI; skipping")
+        (cl-return-from org-download-dnd nil)))))
+   ;; If caller accidentally passed a FRAME as first arg, try to recover:
+   ((framep uri)
+    (let ((win (frame-selected-window uri)))
+      (if (or (stringp action) (and (listp action) (cl-every #'stringp action)))
+          (progn
+            (setq uri action)
+            (setq action nil)
+            (when (window-live-p win)
+              (with-selected-window win
+                (cond
+                 ((and (listp uri) (cl-every #'stringp uri))
+                  (if (org-download-org-mode-p)
+                      (dolist (f uri)
+                        (condition-case err
+                            (org-download-image (if (string-prefix-p "file:" f)
+                                                    f
+                                                  (concat "file:" f)))
+                          (error (message "org-download: failed to drop %s: %S" f err))))
+                    (org-download-dnd-fallback uri action)))
+                 ((and (stringp uri) (org-download-org-mode-p))
+                  (condition-case err
+                      (org-download-image uri)
+                    (error (message "org-download: failed to drop %s: %S" uri err))))
+                 ((and (stringp uri))
+                  (org-download-dnd-fallback uri action))
+                 (t (org-download-dnd-fallback uri action))))))
+        (message "org-download-dnd: called with a frame as first arg but action isn't a URI; skipping")
+        (cl-return-from org-download-dnd nil))))
+   ;; Normal case: first arg is a string or list; pick a window that displays the buffer
+   (t
+    (unless (or (stringp uri) (and (listp uri) (cl-every #'stringp uri)))
+      (message "org-download-dnd: unexpected uri type %S; skipping" (type-of uri))
+      (cl-return-from org-download-dnd nil))
+    (let* ((win (or (and (buffer-live-p (current-buffer))
+                         (get-buffer-window (current-buffer) t))
+                    (selected-window)))
+           ;; ensure `win' is a real window (convert frame -> selected-window on that frame)
+           (win (cond ((windowp win) win)
+                      ((framep win) (frame-selected-window win))
+                      (t (selected-window)))))
+      (unless (window-live-p win)
+        (setq win (selected-window)))
+      (with-selected-window win
+        (cond
+         ;; multiple files (modern file-managers send a list)
+         ((and (listp uri) (cl-every #'stringp uri))
+          (if (org-download-org-mode-p)
+              (dolist (f uri)
+                (condition-case err
+                    (org-download-image (if (string-prefix-p "file:" f)
+                                            f
+                                          (concat "file:" f)))
+                  (error (message "org-download: failed to drop %s: %S" f err))))
+            (org-download-dnd-fallback uri action)))
+         ;; single URI (string)
+         ((and (stringp uri) (org-download-org-mode-p))
+          (condition-case err
+              (org-download-image uri)
+            (error (message "org-download: failed to drop %s: %S" uri err))))
+         (t
+          (org-download-dnd-fallback uri action))))))))
 
-;;; Dired helper
+;;; Dired helper (unchanged)
 (defun org-download-dired (uri)
   "Download URI to `default-directory'."
   (raise-frame)
@@ -411,12 +475,10 @@ passes a window/frame as the first argument)."
   :keymap org-download-mode-map
   (if org-download-mode
       (progn
-        ;; Register handlers in dnd-protocol-alist. Use function symbols so they
-        ;; can be advised or replaced by users if desired.
         (push (cons "^\\(https?\\|ftp\\|file\\|nfs\\):" #'org-download-dnd)
               dnd-protocol-alist)
         (push (cons "^data:" #'org-download-dnd-base64) dnd-protocol-alist))
-    ;; remove our handlers
+    ;;remove our handlers
     (setq dnd-protocol-alist
           (cl-remove-if (lambda (x) (memq (cdr x) '(org-download-dnd org-download-dnd-base64)))
                         dnd-protocol-alist))))
